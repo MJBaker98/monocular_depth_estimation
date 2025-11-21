@@ -1,9 +1,10 @@
 import torch
 import torchvision.transforms as v2
-from torchvision.datasets.mnist import MNIST
-from torch.utils.data import DataLoader
-from models.image_classifier import Classifier
 from omegaconf import OmegaConf
+from torch.utils.data import DataLoader
+from torchvision.datasets.mnist import MNIST
+
+from models.image_classifier import Classifier
 
 
 def main():

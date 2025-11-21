@@ -3,7 +3,7 @@ name = "MDE"
 version = "0.1.0"
 description = "Implementation of a deep neural network for monocular depth estimation"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "datasets==3.6",
     "debugpy>=1.8.17",
@@ -49,6 +49,14 @@ venvPath="."
 venv = ".venv"
 include=['.']
 pythonVersion="3.13"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportMissingParameterType = false
+reportAny = false
+reportUnannotatedClassAttribute = false
+reportMissingTypeArgument = false
+reportUnknownParameterType = false
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

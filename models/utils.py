@@ -1,6 +1,6 @@
+import numpy as np
 import torch
 import torch.nn as nn
-from typing import Tuple
 from omegaconf import DictConfig, ListConfig
 
 
@@ -11,7 +11,7 @@ class Embedding(nn.Module):
 
     def __init__(
         self,
-        img_size: Tuple[int, int],
+        img_size: tuple[int, int],
         patch_size: int,
         in_channels: int,
         out_channels: int,
@@ -118,11 +118,11 @@ class MultiheadAttention(nn.Module):
 
     """
 
-    def __init__(self, n_total_nodes, n_heads):
+    def __init__(self, n_total_nodes: int, n_heads: int):
         super().__init__()
-        assert (
-            n_total_nodes % n_heads == 0
-        ), f"Number of multi-head attention heads must be divisible by the number of heads: received {n_total_nodes} total nodes and {n_heads}"
+        assert n_total_nodes % n_heads == 0, (
+            f"Number of multi-head attention heads must be divisible by the number of heads: received {n_total_nodes} total nodes and {n_heads}"
+        )
 
         self.nodes_per_head = int(
             n_total_nodes / n_heads
@@ -150,7 +150,12 @@ class MLP(nn.Module):
     """
 
     def __init__(
-        self, n_hidden_layers, n_inputs, n_outputs, n_hidden_nodes, activation: str
+        self,
+        n_hidden_layers: int,
+        n_inputs: int,
+        n_outputs: int,
+        n_hidden_nodes: int,
+        activation: str,
     ):
         super().__init__()
 
@@ -230,3 +235,53 @@ class TransformerEncoder(nn.Module):
         final = middle + mlp_out
 
         return final
+
+
+def regression_cutmix(
+    images: torch.Tensor, targets: torch.Tensor, beta: float = 0.1
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Method that implements the CutMix regularizer for regression tasks
+        Much of this follows the implementation from the CutMix-PyTorch repo
+
+    Args:
+        images: torch.Tensor, Images to process
+        targets: torch.Tensor, real value points to transfer (e.g., depth)
+
+    Returns:
+        transformed_images: torch.Tensor, Images with replaced regions
+        transformed_targets: torch.Tensor, value maps with replaced regions
+    """
+    lam = np.random.beta(beta, beta)
+    rand_index = torch.randperm(images.size()[0]).to("mps")
+    target_a = targets
+    target_b = targets[rand_index]
+    bbx1, bby1, bbx2, bby2 = rand_bbox(images.size(), lam)
+    images[:, :, bbx1:bbx2, bby1:bby2] = images[rand_index, :, bbx1:bbx2, bby1:bby2]
+
+    # adjust lambda to exactly match pixel ratio
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (images.size()[-1] * images.size()[-2]))
+
+    return lam, images, target_a, target_b
+
+
+def rand_bbox(size, lam):
+    """
+    random bounding box code from CutMix Pytorch library
+    """
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1.0 - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # uniform
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
