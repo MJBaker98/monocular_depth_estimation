@@ -29,6 +29,7 @@ else:
 from datetime import datetime
 from pathlib import Path
 
+from models.LMR import MaskLearner
 from models.utils import regression_cutmix
 
 
@@ -87,6 +88,10 @@ def plot_while_training(
     out_path = out_path / f"depth_index_epoch_{epoch}.png"
     plt.savefig(out_path)
 
+    # clean up figures
+    plt.close()
+    del fig
+
 
 def train_simple(
     model: nn.Module,
@@ -94,7 +99,7 @@ def train_simple(
     optim: Optimizer,
     scheduler: CosineAnnealingLR,
     epochs: int = 50,
-    print_every: int = 1,
+    save_every: int = 10,
 ) -> None:
     """
     Train depth head on NYU dataset with no additional regularization
@@ -143,13 +148,13 @@ def train_simple(
 
             grads = torch.Tensor(grads)
 
-            if i % print_every == 0:
+            if i % 1 == 0:
                 with torch.no_grad():
                     mse_loss = F.mse_loss(prediction, y)
                 pbar.set_postfix_str(
                     f"train_loss: {err:.2f} | mse_loss: {mse_loss:.2f} | l1_loss: {l1_loss:.2f} | composite loss: {composite_loss:.2f} | min pred. depth: {prediction.min().item():.2f} | max pred. depth: {prediction.max().item():.2f}"
                 )
-                pbar.update(print_every)
+                pbar.update(1)
 
             i += 1
 
@@ -161,20 +166,26 @@ def train_simple(
             except:
                 print("Failed while writing figure... continuing")
 
+        if e % save_every == 0:
+            print(f"Saving checkpoint at epoch {e}:")
+            simple_path = f"output/checkpoint/simple_model_epoch_{e}.pth"
+            torch.save(model.state_dict(), simple_path)
+
 
 def train_with_lmr(
     model: nn.Module,
+    mask_learning_model: nn.Module,
     loader: DataLoader,
     optim: Optimizer,
-    scheduler: CosineAnnealingLR,
+    scheduler: CosineAnnealingLR | None,
     epochs: int = 50,
-    print_every: int = 1,
+    save_every: int = 10,
 ) -> None:
     """
     Train depth head on NYU dataset with lmr regularizer
     """
     model.train()
-    pbar = tqdm(total=epochs * len(loader), desc="Training MDE:", ascii=">=")
+    pbar = tqdm(total=epochs * len(loader), desc="Training MDE:")
     i = 0
     # loss function
     loss = ScaleAndShiftInvariantLoss()
@@ -190,7 +201,12 @@ def train_with_lmr(
             X = X.permute(0, 3, 1, 2)
 
             # pass input through LMR model
-            output_mask = LNR(X)
+            logits = mask_learning_model(X)
+
+            # apply the mask to the image
+            # X, y = LMR_model.apply_mask_as_cutout(
+            #     mask=logits, batch_inputs=X, batch_targets=y
+            # )
 
             # calculate depth
             prediction = model(X)
@@ -199,27 +215,26 @@ def train_with_lmr(
             err = loss(prediction, y, mask)
             mse_loss = F.mse_loss(prediction, y)
             l1_loss = F.smooth_l1_loss(prediction, y)
-            lmr_mask_loss = lmr_loss(
-                net_mask=output_mask, depth_hat=prediction.detach(), depth=y, k=100
+            lmr_mask_loss = 1000 * lmr_loss(
+                net_mask=logits, depth_hat=prediction, depth=y, k=10000
             )
 
-            composite_loss = (
-                (2 * err) + (0.5 * mse_loss) + (0.1 * l1_loss) + (0.5 * lmr_mask_loss)
-            )  # combine losses
+            composite_loss = (0.2 * err) + (lmr_mask_loss)  # combine losses
 
             # process optimizer
             optim.zero_grad()
             composite_loss.backward()  # back-prop losses
             optim.step()
-            scheduler.step()
+            if scheduler:
+                scheduler.step()
 
-            if i % print_every == 0:
+            if i % 1 == 0:
                 with torch.no_grad():
                     mse_loss = F.mse_loss(prediction, y)
                 pbar.set_postfix_str(
                     f"train_loss: {err:.2f} | mse_loss: {mse_loss:.2f} | l1_loss: {l1_loss:.2f} | LMR Loss: {lmr_mask_loss:.2f} | composite loss: {composite_loss:.2f} | min pred. depth: {prediction.min().item():.2f} | max pred. depth: {prediction.max().item():.2f}"
                 )
-                pbar.update(print_every)
+                pbar.update(1)
 
             i += 1
 
@@ -229,6 +244,11 @@ def train_with_lmr(
             except:
                 print("Failed while writing figure... continuing")
 
+        if e % save_every == 0:
+            print(f"Saving checkpoint at epoch {e}:")
+            simple_path = f"output/checkpoint/cutmix_model_epoch_{e}.pth"
+            torch.save(model.state_dict(), simple_path)
+
 
 def train_with_cutmix(
     model: nn.Module,
@@ -236,7 +256,7 @@ def train_with_cutmix(
     optim: Optimizer,
     scheduler: CosineAnnealingLR,
     epochs: int = 50,
-    print_every: int = 1,
+    save_every: int = 10,
     cutmix_probability: float = 0.1,
 ) -> None:
     """
@@ -290,13 +310,13 @@ def train_with_cutmix(
             optim.step()
             scheduler.step()
 
-            if i % print_every == 0:
+            if i % 1 == 0:
                 with torch.no_grad():
                     mse_loss = F.mse_loss(prediction, targets)
                 pbar.set_postfix_str(
                     f"train_loss: {err:.2f} | mse_loss: {mse_loss:.2f} | l1_loss: {l1_loss:.2f} | composite loss: {composite_loss:.2f} | min pred. depth: {prediction.min().item():.2f} | max pred. depth: {prediction.max().item():.2f}"
                 )
-                pbar.update(print_every)
+                pbar.update(1)
 
             i += 1
 
@@ -307,6 +327,11 @@ def train_with_cutmix(
                 )
             except:
                 print("Failed while writing figure... continuing")
+
+        if e % save_every == 0:
+            print(f"Saving checkpoint at epoch {e}:")
+            simple_path = f"output/checkpoint/cutmix_model_epoch_{e}.pth"
+            torch.save(model.state_dict(), simple_path)
 
 
 def eval(model: nn.Module, loader: DataLoader) -> Dict:
@@ -363,15 +388,6 @@ def init_model():
 if __name__ == "__main__":
     print("Running training and assessment for DPT-based model")
 
-    MDE_model = DPTDepthModel(
-        scale=0.000305,
-        shift=0.1378,
-        invert=True,
-        backbone="vitb_rn50_384",
-        non_negative=True,
-        enable_attention_hooks=False,
-    )  # create a standard DPT depth prediction model
-    MDE_model = MDE_model.float().to("mps")
     NYU_DATA_PATH = "data/nyu_data/nyu_depth_v2_labeled.mat"
 
     # download from http://horatio.cs.nyu.edu/mit/silberman/indoor_seg_sup/splits.mat
@@ -380,13 +396,13 @@ if __name__ == "__main__":
     nyu_test_ds = NyuDepthV2(NYU_DATA_PATH, NYU_SPLIT_PATH, split="test")
     nyu_train_ds = NyuDepthV2(NYU_DATA_PATH, NYU_SPLIT_PATH, split="train")
     nyu_train_dataloader = DataLoader(nyu_train_ds, batch_size=12)
-    nyu_test_dataloader = DataLoader(nyu_train_ds, batch_size=12)
+    nyu_test_dataloader = DataLoader(nyu_test_ds, batch_size=12)
 
     ########################
     # model training booleans
-    do_simple = True
+    do_simple = False
     do_cutmix = False
-    do_LMR = False
+    do_LMR = True
 
     ########################
     # Model agnostic hyperparameters
