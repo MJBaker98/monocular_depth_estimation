@@ -20,6 +20,7 @@ from DPT.dpt.models import DPTDepthModel
 from LNRegularizer.LNR import LNR
 from losses.LMR import LMRLoss
 from losses.mde_losses import ScaleAndShiftInvariantLoss
+from models.LMR import MaskLearner
 
 if "IPython" in sys.modules:
     from tqdm.notebook import tqdm
@@ -29,68 +30,12 @@ else:
 from datetime import datetime
 from pathlib import Path
 
-from models.LMR import MaskLearner
-from models.utils import regression_cutmix
-
-
-def plot_test_frames(
-    model: nn.Module,
-    dataset: Dataset,
-    indices: List[int],
-    epoch: int,
-    save_fig: bool = False,
-) -> None:
-    """Generate a plot of depth images at specific indices"""
-    for i in indices:
-        datapoint = dataset[i]
-        X = datapoint["image"]
-        y = datapoint["depth"]
-        mask = datapoint["mask"]
-
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 8))
-        ax1.imshow(X)
-        ax1.set_title("Image")
-        ax2.imshow(y)
-        ax2.set_title("Truth depth")
-
-        X = torch.Tensor(X).to("mps").unsqueeze(0).permute(0, 3, 1, 2)
-        with torch.no_grad():
-            prediction = model(X).permute(1, 2, 0).cpu().numpy()
-        ax3.imshow(prediction, cmap="viridis")
-        ax3.set_title("Predicted depth")
-
-        output_path = Path("output/figs")
-
-        if save_fig:
-            out_str = f"depth_index_{i}_epoch_{epoch}.png"
-            plt.savefig(out_str)
-        else:
-            plt.show()
-
-
-def plot_while_training(
-    image: torch.Tensor,
-    truth: torch.Tensor,
-    prediction: torch.Tensor,
-    epoch: int,
-    model_name: str,
-) -> None:
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 8))
-    ax1.imshow(image.permute(1, 2, 0).cpu())
-    ax1.set_title("Image")
-    ax2.imshow(truth.cpu(), cmap="viridis")
-    ax2.set_title("Truth depth")
-    ax3.imshow(prediction.cpu(), cmap="viridis")
-    ax3.set_title("Predicted depth")
-
-    out_path = Path(f"output/figs/{model_name}")
-    out_path.mkdir(parents=True, exist_ok=True)
-    out_path = out_path / f"depth_index_epoch_{epoch}.png"
-    plt.savefig(out_path)
-
-    # clean up figures
-    plt.close()
-    del fig
+from dpt_tools.train_utils import (
+    plot_lmr_mask,
+    plot_test_frames,
+    plot_while_training,
+    regression_cutmix,
+)
 
 
 def train_simple(
@@ -180,6 +125,7 @@ def train_with_lmr(
     scheduler: CosineAnnealingLR | None,
     epochs: int = 50,
     save_every: int = 10,
+    visualize_mask: bool = False,
 ) -> None:
     """
     Train depth head on NYU dataset with lmr regularizer
@@ -213,13 +159,13 @@ def train_with_lmr(
 
             # calculate losses
             err = loss(prediction, y, mask)
+            lmr_mask_loss, depth_difference_mask = lmr_loss(
+                net_mask=logits, depth_hat=prediction.detach(), depth=y, k=10000
+            )
             mse_loss = F.mse_loss(prediction, y)
             l1_loss = F.smooth_l1_loss(prediction, y)
-            lmr_mask_loss = 1000 * lmr_loss(
-                net_mask=logits, depth_hat=prediction, depth=y, k=10000
-            )
 
-            composite_loss = (0.2 * err) + (lmr_mask_loss)  # combine losses
+            composite_loss = (1.0 * err) + (3 * lmr_mask_loss)  # combine losses
 
             # process optimizer
             optim.zero_grad()
@@ -232,7 +178,7 @@ def train_with_lmr(
                 with torch.no_grad():
                     mse_loss = F.mse_loss(prediction, y)
                 pbar.set_postfix_str(
-                    f"train_loss: {err:.2f} | mse_loss: {mse_loss:.2f} | l1_loss: {l1_loss:.2f} | LMR Loss: {lmr_mask_loss:.2f} | composite loss: {composite_loss:.2f} | min pred. depth: {prediction.min().item():.2f} | max pred. depth: {prediction.max().item():.2f}"
+                    f"train_loss: {err:.2f} | mse_loss: {mse_loss:.2f} | l1_loss: {l1_loss:.2f} | LMR Loss: {lmr_mask_loss:.3f} | composite loss: {composite_loss:.2f} | min pred. depth: {prediction.min().item():.2f} | max pred. depth: {prediction.max().item():.2f}"
                 )
                 pbar.update(1)
 
@@ -241,13 +187,20 @@ def train_with_lmr(
         with torch.no_grad():
             try:
                 plot_while_training(X[0, ...], y[0, ...], prediction[0, ...], e, "LMR")
-            except:
-                print("Failed while writing figure... continuing")
+                if visualize_mask:
+                    plot_lmr_mask(
+                        image=X,
+                        net_logits=logits,
+                        depth_based_mask=depth_difference_mask,
+                        epoch=e,
+                    )
+            except Exception as e:
+                print(f"Failed while writing figure with error {e}... continuing")
 
         if e % save_every == 0:
             print(f"Saving checkpoint at epoch {e}:")
-            simple_path = f"output/checkpoint/cutmix_model_epoch_{e}.pth"
-            torch.save(model.state_dict(), simple_path)
+            lmr_cpt_path = f"output/checkpoint/lmr_model_epoch_{e}.pth"
+            torch.save(model.state_dict(), lmr_cpt_path)
 
 
 def train_with_cutmix(
@@ -302,7 +255,8 @@ def train_with_cutmix(
                 mse_loss = F.mse_loss(prediction, targets)
                 l1_loss = F.smooth_l1_loss(prediction, targets)
 
-            composite_loss = (0.1 * err) + (0.5 * mse_loss) + (0.1 * l1_loss)
+            # composite_loss = (0.1 * err) + (0.5 * mse_loss) + (0.1 * l1_loss)
+            composite_loss = err  # only use the shift and scale invariant loss
 
             # process optimizer
             optim.zero_grad()
@@ -362,6 +316,7 @@ def eval(model: nn.Module, loader: DataLoader) -> Dict:
 
 def init_model():
     model = (
+        # create dpt model from DPT codebase
         DPTDepthModel(
             path="/Users/michael/Documents/Grad_School/Fall25/DeepLearning/Project/MDE/DPT/dpt/weights/dpt_hybrid-midas-501f0c75.pt",
             scale=0.000305,
@@ -383,91 +338,3 @@ def init_model():
                 _ = nn.init.kaiming_normal_(param)
 
     return model
-
-
-if __name__ == "__main__":
-    print("Running training and assessment for DPT-based model")
-
-    NYU_DATA_PATH = "data/nyu_data/nyu_depth_v2_labeled.mat"
-
-    # download from http://horatio.cs.nyu.edu/mit/silberman/indoor_seg_sup/splits.mat
-    NYU_SPLIT_PATH = "data/nyu_data/splits.mat"
-
-    nyu_test_ds = NyuDepthV2(NYU_DATA_PATH, NYU_SPLIT_PATH, split="test")
-    nyu_train_ds = NyuDepthV2(NYU_DATA_PATH, NYU_SPLIT_PATH, split="train")
-    nyu_train_dataloader = DataLoader(nyu_train_ds, batch_size=12)
-    nyu_test_dataloader = DataLoader(nyu_test_ds, batch_size=12)
-
-    ########################
-    # model training booleans
-    do_simple = False
-    do_cutmix = False
-    do_LMR = True
-
-    ########################
-    # Model agnostic hyperparameters
-    epochs = 5
-
-    ########################
-    # Simple model
-    if do_simple:
-        simple_model = init_model()
-
-        optim = Adam(simple_model.parameters(), lr=1e-5)
-        scheduler = CosineAnnealingLR(optim, eta_min=1e-8, T_max=epochs)
-
-        # standard training - no regularization at all
-        train_simple(
-            model=simple_model,
-            loader=nyu_train_dataloader,
-            optim=optim,
-            epochs=epochs,
-            scheduler=scheduler,
-        )
-        simple_res = eval(simple_model, nyu_test_dataloader)
-        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
-        simple_path = "output/checkpoint/simple_model_" + timestr + ".pth"
-        torch.save(simple_model.state_dict(), simple_path)
-
-    #######################
-    # Cutmix model
-    if do_cutmix:
-        cutmix_model = init_model()
-
-        optim = Adam(cutmix_model.parameters(), lr=1e-4)
-        scheduler = CosineAnnealingLR(optim, eta_min=1e-8, T_max=epochs)
-
-        # standard training - no regularization at all
-        train_with_cutmix(
-            model=cutmix_model,
-            loader=nyu_train_dataloader,
-            optim=optim,
-            epochs=5,
-            cutmix_probability=0.25,
-            scheduler=scheduler,
-        )
-        cutmix_res = eval(cutmix_model, nyu_test_dataloader)
-        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
-        cutmix_path = "output/checkpoint/cutmix_model" + timestr + ".pth"
-        torch.save(cutmix_model.state_dict(), cutmix_path)
-
-    #######################
-    # LMR model
-    if do_LMR:
-        lmr_model = init_model()
-
-        optim = Adam(lmr_model.parameters(), lr=1e-5)
-        scheduler = CosineAnnealingLR(optim, eta_min=1e-8, T_max=epochs)
-
-        # standard training - no regularization at all
-        train_with_lmr(
-            model=lmr_model,
-            loader=nyu_train_dataloader,
-            optim=optim,
-            epochs=5,
-            scheduler=scheduler,
-        )
-        lmr_res = eval(lmr_model, nyu_test_dataloader)
-        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
-        lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
-        torch.save(lmr_model.state_dict(), lmr_path)

@@ -22,7 +22,7 @@ from train_dpt import (
 )
 
 
-def main():
+def main(testing: bool = False):
     """
     Training script
       similar to the train_dpt.py script, but with more epochs for longer training times
@@ -103,7 +103,7 @@ def main():
 
         all_params = [
             {"params": lmr_model.parameters(), "lr": 1e-5},
-            {"params": LMR_model.parameters(), "lr": 0.01},
+            {"params": LMR_model.parameters(), "lr": 0.1},
         ]
         optim = Adam(all_params, lr=1e-5)
         # scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
@@ -117,13 +117,15 @@ def main():
             epochs=epochs,
             scheduler=None,
             save_every=100,
+            visualize_mask=True,
         )
-        # lmr_res = eval(lmr_model, nyu_test_dataloader)
-        # timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
-        # lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
-        # torch.save(lmr_model.state_dict(), lmr_path)
+        if not testing:
+            lmr_res = eval(lmr_model, nyu_test_dataloader)
+            timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
+            lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
+            torch.save(lmr_model.state_dict(), lmr_path)
 
 
 if __name__ == "__main__":
     # train each model for 20 epochs
-    main()
+    main(testing=True)

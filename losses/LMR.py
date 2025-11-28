@@ -6,6 +6,7 @@ This file contains a library of loss methods which can be used to optimize the l
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch._refs import zero
 
 
 class LMRLoss(nn.Module):
@@ -18,7 +19,7 @@ class LMRLoss(nn.Module):
         depth_hat: torch.Tensor,
         depth: torch.Tensor,
         k: int,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Implementing the forward method as defined in the paper which relies on information gain
         """
@@ -30,16 +31,14 @@ class LMRLoss(nn.Module):
         depth_hat: torch.Tensor,
         depth: torch.Tensor,
         k: int,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Original idea usees information gain like that is used to build decision trees"""
-
-        # get mask from pseudo-classes
-        # here a 1 means the pixel is kept, 0 means it is masked
-        # I think we may need to reverse this to get training to work
-        mask = net_mask.softmax(dim=1)
-
         # calculate d_hat - d
         diff = torch.abs(depth_hat - depth)
+
+        # ignore depth values where the truth is zero (i.e., set them to some large value so probability is low)
+        zero_depth_mask = (depth == 0).bool()
+        diff[zero_depth_mask] = 1000
 
         # predict liklihood of next iteration via gaussian activation function
         gauss_pred = self.gaussian_activation(diff)
@@ -58,25 +57,8 @@ class LMRLoss(nn.Module):
         # the pixels to mask which would be 1. This is a pseudo ('truth') psuedo class setup
         pred_mask_keep[top_k_inds] = 0.0  # 'mask out' top k value in keep mask
         pred_mask_keep = pred_mask_keep.long()
-
-        # pred_mask_mask = torch.abs(pred_mask_keep - 1).long()  # get the reverse set of points
-
-        # # unsqueeze each mask to get it in batch, channel, [shape] format
-        # pred_mask_keep = pred_mask_keep.unsqueeze(1)
-        # pred_mask_mask = pred_mask_mask.unsqueeze(1)
-        # pseudo_probability = torch.cat(
-        #     (pred_mask_keep, pred_mask_mask), dim=1
-        # )  # cat along probability dimension
-
-        # iou = torch.sum(mask * pseudo_probability) / torch.sum(
-        #     (mask * pred_mask_keep)
-        #     + (mask * pred_mask_mask)
-        #     - (mask * pseudo_probability)
-        # )
-        # print(f"iou: {iou.item()}")
         cel = F.cross_entropy(net_mask, pred_mask_keep)
-        # iou_loss = torch.log(1 / (iou + 1e-6))
-        return cel
+        return cel, pred_mask_keep
 
     def gaussian_activation(self, x: torch.Tensor) -> torch.Tensor:
         """Calcualte gaussian activation function e^(-x^2)"""

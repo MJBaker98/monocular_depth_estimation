@@ -5,6 +5,7 @@ Uses a similar process as the method outlined in the file LNR.py, but instead fo
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Conv_Block(nn.Module):
@@ -89,15 +90,37 @@ class MaskLearner(nn.Module):
         out = self.out_layer(out)
         return out
 
-    def apply_mask_as_mixer(self) -> None:
+    @staticmethod
+    def get_mask_from_logits(logits: torch.Tensor, k: int) -> torch.Tensor:
+        """
+        gets a mask of the top-k highest liklihood points to mask
+        """
+        # find top-k elements in dimension 0
+        pseudo_class_labels = torch.argmax(F.softmax(logits, dim=1), dim=1)
+
+        # # flatten probabilities to [B, H*W] to find topk
+        # assert k > 0, f"k must be greater than zero, currently {k}"
+        # probs_flat = pseudo_class_labels.view(pseudo_class_labels.shape[0], -1)
+        # _, top_prob_inds = torch.topk(probs_flat, dim=-1, k=k)
+        # top_prob_inds_reshaped = torch.unravel_index(
+        #     top_prob_inds, mask_probabilities.shape
+        # )
+
+        # mask = torch.ones_like(mask_probabilities)
+        # mask[top_prob_inds_reshaped] = 0
+        # return mask
+        return pseudo_class_labels
+
+    @staticmethod
+    def apply_mask_as_mixer() -> None:
         """
         given a mask and an input batch of images apply the mask to fill in data from other images
         """
         pass
 
+    @staticmethod
     def apply_mask_as_cutout(
-        self,
-        mask: torch.Tensor,
+        logits: torch.Tensor,
         batch_inputs: torch.Tensor,
         batch_targets: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -110,7 +133,7 @@ class MaskLearner(nn.Module):
         """
         # here I will have logits with two dimensions
         # I need to select the pseudo-class which has the highest probability
-        mask = mask.argmax(dim=1)
+        mask = MaskLearner.get_mask_from_logits(logits, 10000)
 
         # reshape batch for masking
         reshaped_batch = batch_inputs.permute(1, 0, 2, 3)
