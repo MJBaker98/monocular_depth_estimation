@@ -45,7 +45,7 @@ def train_simple(
     scheduler: CosineAnnealingLR,
     epochs: int = 50,
     save_every: int = 10,
-) -> None:
+) -> str:
     """
     Train depth head on NYU dataset with no additional regularization
     """
@@ -54,9 +54,17 @@ def train_simple(
     i = 0
     # loss function
     loss = ScaleAndShiftInvariantLoss()
+    timestamp = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+
+    log_path = "output/log"
+    logfile_name = log_path + "/Log_Simple_" + timestamp + ".txt"
 
     # training loop
     for e in range(epochs):
+        errs = []
+        mse_losses = []
+        l1_losses = []
+        composite_losses = []
         for batch in loader:
             X = batch["image"].float().to("mps")
             y = batch["depth"].float().to("mps")
@@ -73,6 +81,12 @@ def train_simple(
             l1_loss = F.smooth_l1_loss(prediction, y)
 
             composite_loss = (2 * err) + (0.5 * mse_loss) + (0.1 * l1_loss)
+
+            # Record losses
+            errs.append(err)
+            mse_losses.append(mse_loss)
+            l1_losses.append(l1_loss)
+            composite_losses.append(composite_loss)
 
             # print(f"composite_loss requires_grad: {composite_loss.requires_grad}")
 
@@ -104,9 +118,18 @@ def train_simple(
             i += 1
 
         with torch.no_grad():
+            output_path = Path(log_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            with open(logfile_name, "a") as logfile:
+                logfile.write(
+                    f"epoch: {e} | train_loss: {sum(errs) / len(errs):.2f} | mse_loss: {sum(mse_losses) / len(mse_losses):.2f} | l1_loss: {sum(l1_losses) / len(l1_losses):.2f} | composite loss: {sum(composite_losses) / len(composite_losses):.2f}\n"
+                )
             try:
+                plot_test_frames(
+                    model, loader.dataset, [1, 3, 5], e, "simple" + timestamp, True
+                )
                 plot_while_training(
-                    X[0, ...], y[0, ...], prediction[0, ...], e, "simple"
+                    X[0, ...], y[0, ...], prediction[0, ...], e, "simple" + timestamp
                 )
             except:
                 print("Failed while writing figure... continuing")
@@ -115,6 +138,7 @@ def train_simple(
             print(f"Saving checkpoint at epoch {e}:")
             simple_path = f"output/checkpoint/simple_model_epoch_{e}.pth"
             torch.save(model.state_dict(), simple_path)
+    return logfile_name
 
 
 def train_with_lmr(
@@ -126,7 +150,7 @@ def train_with_lmr(
     epochs: int = 50,
     save_every: int = 10,
     visualize_mask: bool = False,
-) -> None:
+) -> str:
     """
     Train depth head on NYU dataset with lmr regularizer
     """
@@ -137,8 +161,17 @@ def train_with_lmr(
     loss = ScaleAndShiftInvariantLoss()
     lmr_loss = LMRLoss()
 
+    timestamp = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+    log_path = "output/log"
+    logfile_name = log_path + "/Log_LMR_" + timestamp
+
     # training loop
     for e in range(epochs):
+        errs = []
+        mse_losses = []
+        l1_losses = []
+        lmr_mask_losses = []
+        composite_losses = []
         for batch in loader:
             X = batch["image"].float().to("mps")
             y = batch["depth"].float().to("mps")
@@ -167,6 +200,13 @@ def train_with_lmr(
 
             composite_loss = (1.0 * err) + (3 * lmr_mask_loss)  # combine losses
 
+            # Record losses
+            errs.append(err)
+            mse_losses.append(mse_loss)
+            l1_losses.append(l1_loss)
+            lmr_mask_losses.append(lmr_mask_loss)
+            composite_losses.append(composite_loss)
+
             # process optimizer
             optim.zero_grad()
             composite_loss.backward()  # back-prop losses
@@ -185,8 +225,17 @@ def train_with_lmr(
             i += 1
 
         with torch.no_grad():
+            output_path = Path(log_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            with open(logfile_name, "a") as logfile:
+                logfile.write(
+                    f"epoch: {e} | train_loss: {sum(errs) / len(errs):.2f} | mse_loss: {sum(mse_losses) / len(mse_losses):.2f} | l1_loss: {sum(l1_losses) / len(l1_losses):.2f} | LMR Loss: {sum(lmr_mask_losses) / len(lmr_mask_losses):.2f} | composite loss: {sum(composite_losses) / len(composite_losses):.2f}\n"
+                )
             try:
                 plot_while_training(X[0, ...], y[0, ...], prediction[0, ...], e, "LMR")
+                plot_test_frames(
+                    model, loader.dataset, [1, 3, 5], e, "LMR_" + timestamp, True
+                )
                 if visualize_mask:
                     plot_lmr_mask(
                         image=X,
@@ -201,6 +250,7 @@ def train_with_lmr(
             print(f"Saving checkpoint at epoch {e}:")
             lmr_cpt_path = f"output/checkpoint/lmr_model_epoch_{e}.pth"
             torch.save(model.state_dict(), lmr_cpt_path)
+    return logfile_name
 
 
 def train_with_cutmix(
@@ -211,7 +261,7 @@ def train_with_cutmix(
     epochs: int = 50,
     save_every: int = 10,
     cutmix_probability: float = 0.1,
-) -> None:
+) -> str:
     """
     Train depth head on NYU dataset using cutmix regularization
     """
@@ -221,8 +271,16 @@ def train_with_cutmix(
     # loss function
     loss = ScaleAndShiftInvariantLoss()
 
+    timestamp = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+    log_path = "output/log"
+    logfile_name = log_path + "/Log_Cutmix_" + timestamp
+
     # training loop
     for e in range(epochs):
+        errs = []
+        mse_losses = []
+        l1_losses = []
+        composite_losses = []
         for batch in loader:
             images = batch["image"].float().to("mps")
             targets = batch["depth"].float().to("mps")
@@ -258,6 +316,12 @@ def train_with_cutmix(
             # composite_loss = (0.1 * err) + (0.5 * mse_loss) + (0.1 * l1_loss)
             composite_loss = err  # only use the shift and scale invariant loss
 
+            # Record losses
+            errs.append(err)
+            mse_losses.append(mse_loss)
+            l1_losses.append(l1_loss)
+            composite_losses.append(composite_loss)
+
             # process optimizer
             optim.zero_grad()
             composite_loss.backward()  # back-prop losses
@@ -275,9 +339,22 @@ def train_with_cutmix(
             i += 1
 
         with torch.no_grad():
+            output_path = Path(log_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            with open(logfile_name, "a") as logfile:
+                logfile.write(
+                    f"epoch: {e} | train_loss: {sum(errs) / len(errs):.2f} | mse_loss: {sum(mse_losses) / len(mse_losses):.2f} | l1_loss: {sum(l1_losses) / len(l1_losses):.2f} | composite loss: {sum(composite_losses) / len(composite_losses):.2f}\n"
+                )
             try:
+                plot_test_frames(
+                    model, loader.dataset, [1, 3, 5], e, "cutmix" + timestamp, True
+                )
                 plot_while_training(
-                    images[0, ...], targets[0, ...], prediction[0, ...], e, "cutmix"
+                    images[0, ...],
+                    targets[0, ...],
+                    prediction[0, ...],
+                    e,
+                    "cutmix" + timestamp,
                 )
             except:
                 print("Failed while writing figure... continuing")
@@ -286,6 +363,7 @@ def train_with_cutmix(
             print(f"Saving checkpoint at epoch {e}:")
             simple_path = f"output/checkpoint/cutmix_model_epoch_{e}.pth"
             torch.save(model.state_dict(), simple_path)
+    return logfile_name
 
 
 def eval(model: nn.Module, loader: DataLoader) -> Dict:
@@ -338,3 +416,146 @@ def init_model():
                 _ = nn.init.kaiming_normal_(param)
 
     return model
+
+
+if __name__ == "__main__":
+    print("Running training and assessment for DPT-based model")
+
+    MDE_model = DPTDepthModel(
+        scale=0.000305,
+        shift=0.1378,
+        invert=True,
+        backbone="vitb_rn50_384",
+        non_negative=True,
+        enable_attention_hooks=False,
+    )  # create a standard DPT depth prediction model
+    MDE_model = MDE_model.float().to("mps")
+    NYU_DATA_PATH = "data/nyu_data/nyu_depth_v2_labeled.mat"
+
+    # download from http://horatio.cs.nyu.edu/mit/silberman/indoor_seg_sup/splits.mat
+    NYU_SPLIT_PATH = "data/nyu_data/splits.mat"
+
+    nyu_test_ds = NyuDepthV2(NYU_DATA_PATH, NYU_SPLIT_PATH, split="test")
+    nyu_train_ds = NyuDepthV2(NYU_DATA_PATH, NYU_SPLIT_PATH, split="train")
+    nyu_train_dataloader = DataLoader(nyu_train_ds, batch_size=4)
+    nyu_test_dataloader = DataLoader(nyu_train_ds, batch_size=4)
+
+    # Make output folder
+    output_path = Path("output/checkpoint")
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    ########################
+    # model training runs
+    do_simple = 5
+    do_cutmix = 0
+    do_LMR = 0
+
+    ########################
+    # Model agnostic hyperparameters
+    epochs = 20
+
+    ########################
+    # Simple model
+    for i in range(do_simple):
+        print(f"Starting simple model {i}")
+        simple_model = init_model()
+
+        optim = Adam(simple_model.parameters(), lr=1e-4)
+        scheduler = CosineAnnealingLR(optim, eta_min=1e-8, T_max=epochs)
+
+        # Initial performance
+        plot_test_frames(
+            simple_model,
+            nyu_train_dataloader.dataset,
+            [1, 3, 5],
+            i,
+            "simple_before_training",
+            True,
+        )
+
+        # standard training - no regularization at all
+        log_name = train_simple(
+            model=simple_model,
+            loader=nyu_train_dataloader,
+            optim=optim,
+            epochs=epochs,
+            scheduler=scheduler,
+        )
+        simple_res = eval(simple_model, nyu_test_dataloader)
+        with open(log_name, "a") as file:
+            file.write(f"Eval avg_mse: {simple_res['mse_avg']}")
+        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+        simple_path = "output/checkpoint/simple_model_" + timestr + ".pth"
+        torch.save(simple_model.state_dict(), simple_path)
+
+    #######################
+    # Cutmix model
+    for i in range(do_cutmix):
+        print(f"Starting Cutmix model {i}")
+        cutmix_model = init_model()
+
+        optim = Adam(cutmix_model.parameters(), lr=1e-4)
+        scheduler = CosineAnnealingLR(optim, eta_min=1e-8, T_max=epochs)
+
+        # Initial performance
+        plot_test_frames(
+            cutmix_model,
+            nyu_train_dataloader.dataset,
+            [1, 3, 5],
+            i,
+            "cutmix_before_training",
+            True,
+        )
+
+        # Cutmix training
+        log_name = train_with_cutmix(
+            model=cutmix_model,
+            loader=nyu_train_dataloader,
+            optim=optim,
+            epochs=epochs,
+            cutmix_probability=0.25,
+            scheduler=scheduler,
+        )
+        cutmix_res = eval(cutmix_model, nyu_test_dataloader)
+        with open(log_name, "a") as file:
+            file.write(f"Eval avg_mse: {cutmix_res['mse_avg']}")
+        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+        cutmix_path = "output/checkpoint/cutmix_model" + timestr + ".pth"
+        torch.save(cutmix_model.state_dict(), cutmix_path)
+
+    #######################
+    # LMR model
+    for i in range(do_LMR):
+        print(f"Starting LMR model {i}")
+        lmr_model = init_model()
+
+        optim = Adam(lmr_model.parameters(), lr=1e-4)
+        scheduler = CosineAnnealingLR(optim, eta_min=1e-8, T_max=epochs)
+
+        # Initial performance
+        plot_test_frames(
+            lmr_model,
+            nyu_train_dataloader.dataset,
+            [1, 3, 5],
+            i,
+            "lmr_before_training",
+            True,
+        )
+
+        # Learned Mask Regularizer training
+        log_name = train_with_lmr(
+            model=lmr_model,
+            mask_learning_model=LMR_model,
+            loader=nyu_single_image_dataloader,
+            optim=optim,
+            epochs=epochs,
+            scheduler=None,
+            save_every=100,
+            visualize_mask=True,
+        )
+        lmr_res = eval(lmr_model, nyu_test_dataloader)
+        with open(log_name, "a") as file:
+            file.write(f"Eval avg_mse: {lmr_res['mse_avg']}")
+        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+        lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
+        torch.save(lmr_model.state_dict(), lmr_path)
