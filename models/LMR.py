@@ -54,7 +54,9 @@ class MaskLearner(nn.Module):
         self.u_conv4 = Conv_Block(16, 8)
 
         # Final 1x1 convolution
-        self.out_layer = nn.Conv2d(8, 2, 1)  # 2 pseudo-classes for mask and don't mask
+        self.out_layer = nn.Conv2d(
+            8, 2, 1
+        )  # 2 pseudo-classes - index 0 is probability to remove and index 1 is the probability to keep
         self.to(device)
 
     def forward(self, x: torch.Tensor):
@@ -88,28 +90,31 @@ class MaskLearner(nn.Module):
         out = self.u_conv4(torch.cat((skip_block_1, out), dim=1))
 
         out = self.out_layer(out)
+
         return out
 
     @staticmethod
-    def get_mask_from_logits(logits: torch.Tensor, k: int) -> torch.Tensor:
+    def get_mask_from_logits(logits: torch.Tensor) -> torch.Tensor:
         """
         gets a mask of the top-k highest liklihood points to mask
         """
-        # find top-k elements in dimension 0
-        pseudo_class_labels = torch.argmax(F.softmax(logits, dim=1), dim=1)
+        # find top k probabilities in the mask field and mask them
+        masked_prob_hat = logits[:, 0, ...]
+        flat_probs = masked_prob_hat.view(masked_prob_hat.shape[0], -1)
+        final_mask = torch.ones_like(masked_prob_hat)
 
-        # # flatten probabilities to [B, H*W] to find topk
-        # assert k > 0, f"k must be greater than zero, currently {k}"
-        # probs_flat = pseudo_class_labels.view(pseudo_class_labels.shape[0], -1)
-        # _, top_prob_inds = torch.topk(probs_flat, dim=-1, k=k)
-        # top_prob_inds_reshaped = torch.unravel_index(
-        #     top_prob_inds, mask_probabilities.shape
-        # )
+        # select k highest probability pixels
+        _, pixels_to_mask = torch.topk(flat_probs, k=10000)
 
-        # mask = torch.ones_like(mask_probabilities)
-        # mask[top_prob_inds_reshaped] = 0
-        # return mask
-        return pseudo_class_labels
+        # reshape
+        indices_for_pixels = torch.unravel_index(pixels_to_mask, masked_prob_hat.shape)
+
+        # generate final mask
+        final_mask[indices_for_pixels] = 0
+
+        # max probability in index 0 means pixel should be masked,
+        # this means the tensor can be returned directly
+        return final_mask.long()
 
     @staticmethod
     def apply_mask_as_mixer() -> None:
@@ -133,7 +138,7 @@ class MaskLearner(nn.Module):
         """
         # here I will have logits with two dimensions
         # I need to select the pseudo-class which has the highest probability
-        mask = MaskLearner.get_mask_from_logits(logits, 10000)
+        mask = MaskLearner.get_mask_from_logits(logits)
 
         # reshape batch for masking
         reshaped_batch = batch_inputs.permute(1, 0, 2, 3)

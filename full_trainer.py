@@ -60,7 +60,7 @@ def main(testing: bool = False):
         scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
 
         # standard training - no regularization at all
-        train_simple(
+        simple_log = train_simple(
             model=simple_model,
             loader=nyu_single_image_dataloader,
             optim=optim,
@@ -69,7 +69,9 @@ def main(testing: bool = False):
             save_every=100,
         )
         simple_res = eval(simple_model, nyu_test_dataloader)
-        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
+        with open(simple_log, "a") as file:
+            file.write(f"Eval avg_mse: {simple_res['mse_avg']}")
+        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
         simple_path = "output/checkpoint/simple_model_" + timestr + ".pth"
         torch.save(simple_model.state_dict(), simple_path)
 
@@ -82,7 +84,7 @@ def main(testing: bool = False):
         scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
 
         # standard training - no regularization at all
-        train_with_cutmix(
+        cutmix_log = train_with_cutmix(
             model=cutmix_model,
             loader=nyu_train_dataloader,
             optim=optim,
@@ -91,7 +93,9 @@ def main(testing: bool = False):
             scheduler=scheduler,
         )
         cutmix_res = eval(cutmix_model, nyu_test_dataloader)
-        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
+        with open(cutmix_log, "a") as file:
+            file.write(f"Eval avg_mse: {cutmix_res['mse_avg']}")
+        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
         cutmix_path = "output/checkpoint/cutmix_model" + timestr + ".pth"
         torch.save(cutmix_model.state_dict(), cutmix_path)
 
@@ -103,13 +107,13 @@ def main(testing: bool = False):
 
         all_params = [
             {"params": lmr_model.parameters(), "lr": 1e-5},
-            {"params": LMR_model.parameters(), "lr": 0.1},
+            {"params": LMR_model.parameters(), "lr": 1e-3},
         ]
         optim = Adam(all_params, lr=1e-5)
         # scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
 
         # standard training - no regularization at all
-        train_with_lmr(
+        lmr_log = train_with_lmr(
             model=lmr_model,
             mask_learning_model=LMR_model,
             loader=nyu_single_image_dataloader,
@@ -121,7 +125,9 @@ def main(testing: bool = False):
         )
         if not testing:
             lmr_res = eval(lmr_model, nyu_test_dataloader)
-            timestr = datetime.now().strftime("%a_%d_%b_%Y_%I:%M%p")
+            with open(lmr_log, "a") as file:
+                file.write(f"Eval avg_mse: {lmr_res['mse_avg']}")
+            timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
             lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
             torch.save(lmr_model.state_dict(), lmr_path)
 

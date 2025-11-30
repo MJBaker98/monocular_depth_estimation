@@ -66,6 +66,7 @@ def plot_test_frames(
     dataset: Dataset,
     indices: List[int],
     epoch: int,
+    model_name: str,
     save_fig: bool = False,
 ) -> None:
     """Generate a plot of depth images at specific indices"""
@@ -90,7 +91,7 @@ def plot_test_frames(
         output_path = Path("output/figs")
 
         if save_fig:
-            out_str = f"depth_index_{i}_epoch_{epoch}.png"
+            out_str = f"depth_{model_name}_index_{i}_epoch_{epoch}.png"
             plt.savefig(out_str)
         else:
             plt.show()
@@ -103,25 +104,32 @@ def plot_while_training(
     epoch: int,
     model_name: str,
 ) -> None:
-    fig, ((ax1, ax2, _), (ax3, ax4, ax5)) = plt.subplots(2, 3, figsize=(10, 8))
+    fig, ((ax1, ax2, ax_nan), (ax3, ax4, ax5)) = plt.subplots(2, 3, figsize=(10, 8))
     ax1.imshow(image.permute(1, 2, 0).cpu())
     ax1.set_title("Image")
+    ax1.axis("off")
     im_ax2 = ax2.imshow(truth.cpu(), cmap="viridis")
     ax2.set_title("Truth depth")
+    ax2.axis("off")
     plt.colorbar(im_ax2)
+
+    ax_nan.axis("off")
 
     im_ax3 = ax3.imshow(prediction.cpu(), cmap="viridis")
     ax3.set_title("Predicted depth")
+    ax3.axis("off")
     plt.colorbar(im_ax3)
 
     diff = torch.abs(truth - prediction).cpu()
 
     im_ax4 = ax4.imshow(diff, cmap="viridis")
     ax4.set_title("Depth difference")
+    ax4.axis("off")
     plt.colorbar(im_ax4)
 
     im_ax5 = ax5.imshow(torch.exp(-1 * diff**2), cmap="viridis")
     ax5.set_title("Probability from depth difference")
+    ax5.axis("off")
     plt.colorbar(im_ax5)
 
     out_path = Path(f"output/figs/{model_name}")
@@ -143,7 +151,7 @@ def plot_lmr_mask(
     """
     Plot function specifically for the mask
     """
-    mask_mask = MaskLearner.get_mask_from_logits(net_logits, 10000)
+    mask_mask = MaskLearner.get_mask_from_logits(net_logits)
     fig, (ax0, ax1, ax2) = plt.subplots(1, 3, figsize=(10, 8))
 
     # use first image

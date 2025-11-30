@@ -126,7 +126,12 @@ def train_simple(
                 )
             try:
                 plot_test_frames(
-                    model, loader.dataset, [1, 3, 5], e, "simple" + timestamp, True
+                    model,
+                    dataset=loader.dataset,
+                    indices=[1, 3, 5],
+                    epoch=e,
+                    model_name="simple" + timestamp,
+                    save_fig=True,
                 )
                 plot_while_training(
                     X[0, ...], y[0, ...], prediction[0, ...], e, "simple" + timestamp
@@ -198,7 +203,7 @@ def train_with_lmr(
             mse_loss = F.mse_loss(prediction, y)
             l1_loss = F.smooth_l1_loss(prediction, y)
 
-            composite_loss = (1.0 * err) + (3 * lmr_mask_loss)  # combine losses
+            composite_loss = (1.0 * err) + (1.1 * lmr_mask_loss)  # combine losses
 
             # Record losses
             errs.append(err)
@@ -233,9 +238,9 @@ def train_with_lmr(
                 )
             try:
                 plot_while_training(X[0, ...], y[0, ...], prediction[0, ...], e, "LMR")
-                plot_test_frames(
-                    model, loader.dataset, [1, 3, 5], e, "LMR_" + timestamp, True
-                )
+                # plot_test_frames(
+                #     model, loader.dataset, [1, 3, 5], e, model_name="LMR_" + timestamp
+                # )
                 if visualize_mask:
                     plot_lmr_mask(
                         image=X,
@@ -244,7 +249,7 @@ def train_with_lmr(
                         epoch=e,
                     )
             except Exception as e:
-                print(f"Failed while writing figure with error {e}... continuing")
+                print(f"Failed while writing figure with error {e} ... continuing")
 
         if e % save_every == 0:
             print(f"Saving checkpoint at epoch {e}:")
