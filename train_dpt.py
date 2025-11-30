@@ -31,6 +31,13 @@ from pathlib import Path
 
 from models.utils import regression_cutmix
 
+# Globals for multiple contributors and plotting
+device_str = "mps" # cuda or mps
+init_model_path = "/Users/michael/Documents/Grad_School/Fall25/DeepLearning/Project/MDE/DPT/dpt/weights/dpt_hybrid-midas-501f0c75.pt"
+min_depth = 0
+max_depth = 10
+
+
 
 def plot_test_frames(
     model: nn.Module,
@@ -50,14 +57,17 @@ def plot_test_frames(
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 8))
         ax1.imshow(X)
         ax1.set_title("Image")
-        ax2.imshow(y)
+        ax2.imshow(y, vmin=min_depth, vmax=max_depth, cmap="viridis")
         ax2.set_title("Truth depth")
 
-        X = torch.Tensor(X).to("mps").unsqueeze(0).permute(0, 3, 1, 2)
+        X = torch.Tensor(X).to(device_str).unsqueeze(0).permute(0, 3, 1, 2)
         with torch.no_grad():
             prediction = model(X).permute(1, 2, 0).cpu().numpy()
-        ax3.imshow(prediction, cmap="viridis")
+        im = ax3.imshow(prediction, vmin=min_depth, vmax=max_depth, cmap="viridis")
         ax3.set_title("Predicted depth")
+        fig.subplots_adjust(right=0.8)
+        cbar_ax = fig.add_axes((0.85, 0.4, 0.05, 0.2))
+        fig.colorbar(im, cax=cbar_ax)
 
         if save_fig:
             output_path = Path(f"output/figs/{model_name}")
@@ -79,16 +89,82 @@ def plot_while_training(
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 8))
     ax1.imshow(image.permute(1, 2, 0).cpu())
     ax1.set_title("Image")
-    ax2.imshow(truth.cpu(), cmap="viridis")
+    ax2.imshow(truth.cpu(), vmin=min_depth, vmax=max_depth, cmap="viridis")
     ax2.set_title("Truth depth")
-    ax3.imshow(prediction.cpu(), cmap="viridis")
+    im = ax3.imshow(prediction.cpu(), vmin=min_depth, vmax=max_depth, cmap="viridis")
     ax3.set_title("Predicted depth")
+    fig.subplots_adjust(right=0.8)
+    cbar_ax = fig.add_axes((0.85, 0.4, 0.05, 0.2))
+    fig.colorbar(im, cax=cbar_ax)
 
     out_path = Path(f"output/figs/{model_name}")
     out_path.mkdir(parents=True, exist_ok=True)
     out_path = out_path / f"depth_index_epoch_{epoch}.png"
     plt.savefig(out_path)
     plt.close()
+
+def plot_image_comparison(
+    image1: torch.Tensor,
+    image2: torch.Tensor,
+    image1_title: str,
+    image2_title: str,
+) -> None:
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 8))
+    ax1.imshow(image1.cpu(), vmin=-max_depth, vmax=max_depth, cmap="viridis")
+    ax1.set_title(image1_title)
+    ax2.imshow(image2.cpu(), vmin=-max_depth, vmax=max_depth, cmap="viridis")
+    ax2.set_title(image2_title)
+    difference = image1-image2
+    im = ax3.imshow(difference.cpu(), vmin=-max_depth, vmax=max_depth, cmap="viridis")
+    ax3.set_title("Difference in depth")
+    fig.subplots_adjust(right=0.8)
+    cbar_ax = fig.add_axes((0.85, 0.4, 0.05, 0.2))
+    fig.colorbar(im, cax=cbar_ax)
+
+    out_path = Path("output/figs/comparisons")
+    out_path.mkdir(parents=True, exist_ok=True)
+    out_path = out_path / f"comparison_{image1_title}_{image2_title}.png"
+    plt.savefig(out_path)
+    plt.close()
+
+def generate_comparison_image(
+    model1_path: str,
+    model2_path: str,
+    model1_title: str,
+    model2_title: str,
+    dataset: Dataset,
+    image_instance: int = 0
+) -> None:
+    
+    MDE_model1 = DPTDepthModel(
+        scale=0.000305,
+        shift=0.1378,
+        invert=True,
+        backbone="vitb_rn50_384",
+        non_negative=True,
+        enable_attention_hooks=False,
+    )  # create a standard DPT depth prediction model
+    MDE_model1.load_state_dict(torch.load(model1_path, weights_only=True))
+    MDE_model1 = MDE_model1.float().to(device_str)
+    MDE_model2 = DPTDepthModel(
+        scale=0.000305,
+        shift=0.1378,
+        invert=True,
+        backbone="vitb_rn50_384",
+        non_negative=True,
+        enable_attention_hooks=False,
+    )  # create a standard DPT depth prediction model
+    MDE_model2.load_state_dict(torch.load(model2_path, weights_only=True))
+    MDE_model2 = MDE_model2.float().to(device_str)
+
+    datapoint = dataset[image_instance]
+    X = datapoint["image"]
+
+    X = torch.Tensor(X).to(device_str).unsqueeze(0).permute(0, 3, 1, 2)
+    with torch.no_grad():
+        prediction1 = MDE_model1(X).permute(1, 2, 0).cpu()
+        prediction2 = MDE_model2(X).permute(1, 2, 0).cpu()
+        plot_image_comparison(prediction1, prediction2, model1_title, model2_title)
 
 
 def train_simple(
@@ -120,9 +196,9 @@ def train_simple(
         l1_losses = []
         composite_losses = []
         for batch in loader:
-            X = batch["image"].float().to("mps")
-            y = batch["depth"].float().to("mps")
-            mask = batch["mask"].float().to("mps")
+            X = batch["image"].float().to(device_str)
+            y = batch["depth"].float().to(device_str)
+            mask = batch["mask"].float().to(device_str)
 
             X = X.permute(0, 3, 1, 2)
 
@@ -216,9 +292,9 @@ def train_with_lmr(
         lmr_mask_losses = []
         composite_losses = []
         for batch in loader:
-            X = batch["image"].float().to("mps")
-            y = batch["depth"].float().to("mps")
-            mask = batch["mask"].float().to("mps")
+            X = batch["image"].float().to(device_str)
+            y = batch["depth"].float().to(device_str)
+            mask = batch["mask"].float().to(device_str)
 
             X = X.permute(0, 3, 1, 2)
 
@@ -305,9 +381,9 @@ def train_with_cutmix(
         l1_losses = []
         composite_losses = []
         for batch in loader:
-            images = batch["image"].float().to("mps")
-            targets = batch["depth"].float().to("mps")
-            mask = batch["mask"].float().to("mps")
+            images = batch["image"].float().to(device_str)
+            targets = batch["depth"].float().to(device_str)
+            mask = batch["mask"].float().to(device_str)
 
             images = images.permute(0, 3, 1, 2)
 
@@ -384,8 +460,8 @@ def eval(model: nn.Module, loader: DataLoader) -> Dict:
     pbar = tqdm(total=len(loader), desc="Evaluating MDE:")
     test_err = []
     for batch in loader:
-        X = batch["image"].float().to("mps")
-        y = batch["depth"].float().to("mps")
+        X = batch["image"].float().to(device_str)
+        y = batch["depth"].float().to(device_str)
         with torch.no_grad():
             X = X.permute(0, 3, 1, 2)
             prediction = model(X)
@@ -405,7 +481,7 @@ def eval(model: nn.Module, loader: DataLoader) -> Dict:
 def init_model():
     model = (
         DPTDepthModel(
-            path="/Users/michael/Documents/Grad_School/Fall25/DeepLearning/Project/MDE/DPT/dpt/weights/dpt_hybrid-midas-501f0c75.pt",
+            path=init_model_path,
             scale=0.000305,
             shift=0.1378,
             invert=True,
@@ -414,7 +490,7 @@ def init_model():
             enable_attention_hooks=False,
         )
         .float()
-        .to("mps")
+        .to(device_str)
     )
 
     # keep everything but initialize the final head model
@@ -438,7 +514,7 @@ if __name__ == "__main__":
         non_negative=True,
         enable_attention_hooks=False,
     )  # create a standard DPT depth prediction model
-    MDE_model = MDE_model.float().to("mps")
+    MDE_model = MDE_model.float().to(device_str)
     NYU_DATA_PATH = "data/nyu_data/nyu_depth_v2_labeled.mat"
 
     # download from http://horatio.cs.nyu.edu/mit/silberman/indoor_seg_sup/splits.mat
