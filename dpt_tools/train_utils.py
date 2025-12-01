@@ -104,25 +104,30 @@ def plot_while_training(
     epoch: int,
     model_name: str,
 ) -> None:
+    truth_dmax = truth.max()
+    truth_dmin = truth.min()
+
     fig, ((ax1, ax2, ax_nan), (ax3, ax4, ax5)) = plt.subplots(2, 3, figsize=(10, 8))
-    ax1.imshow(image.permute(1, 2, 0).cpu())
+    ax1.imshow(image.permute(1, 2, 0).cpu(), vmin=truth_dmin, vmax=truth_dmax)
     ax1.set_title("Image")
     ax1.axis("off")
-    im_ax2 = ax2.imshow(truth.cpu(), cmap="viridis")
+    im_ax2 = ax2.imshow(truth.cpu(), vmin=truth_dmin, vmax=truth_dmax, cmap="viridis")
     ax2.set_title("Truth depth")
     ax2.axis("off")
     plt.colorbar(im_ax2)
 
     ax_nan.axis("off")
 
-    im_ax3 = ax3.imshow(prediction.cpu(), cmap="viridis")
+    im_ax3 = ax3.imshow(
+        prediction.cpu(), vmin=truth_dmin, vmax=truth_dmax, cmap="viridis"
+    )
     ax3.set_title("Predicted depth")
     ax3.axis("off")
     plt.colorbar(im_ax3)
 
     diff = torch.abs(truth - prediction).cpu()
 
-    im_ax4 = ax4.imshow(diff, cmap="viridis")
+    im_ax4 = ax4.imshow(diff, vmin=truth_dmin, vmax=truth_dmax, cmap="viridis")
     ax4.set_title("Depth difference")
     ax4.axis("off")
     plt.colorbar(im_ax4)

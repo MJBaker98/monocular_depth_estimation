@@ -49,7 +49,7 @@ def main(testing: bool = False):
 
     ########################
     # Model agnostic hyperparameters
-    epochs = 100
+    epochs = 1
 
     ########################
     # Simple model
@@ -106,21 +106,21 @@ def main(testing: bool = False):
         LMR_model = MaskLearner(device=torch.device("mps"))
 
         all_params = [
-            {"params": lmr_model.parameters(), "lr": 1e-5},
+            {"params": lmr_model.parameters(), "lr": 1e-4},
             {"params": LMR_model.parameters(), "lr": 1e-3},
         ]
-        optim = Adam(all_params, lr=1e-5)
-        # scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
+        optim = Adam(all_params)
+        # scheduler = CosineAnnealingLR(optim, eta_min=1e-5, T_max=epochs)
 
         # standard training - no regularization at all
         lmr_log = train_with_lmr(
             model=lmr_model,
             mask_learning_model=LMR_model,
-            loader=nyu_single_image_dataloader,
+            loader=nyu_train_dataloader,
             optim=optim,
             epochs=epochs,
             scheduler=None,
-            save_every=100,
+            save_every=10,
             visualize_mask=True,
         )
         if not testing:
@@ -134,4 +134,4 @@ def main(testing: bool = False):
 
 if __name__ == "__main__":
     # train each model for 20 epochs
-    main(testing=True)
+    main(testing=False)

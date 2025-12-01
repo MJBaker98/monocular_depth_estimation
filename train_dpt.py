@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.externals.array_api_compat.numpy import zeros
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
@@ -188,9 +189,18 @@ def train_with_lmr(
             logits = mask_learning_model(X)
 
             # apply the mask to the image
-            # X, y = LMR_model.apply_mask_as_cutout(
-            #     mask=logits, batch_inputs=X, batch_targets=y
-            # )
+            cutout = False
+            if cutout:
+                X, y = MaskLearner.apply_mask_as_cutout(
+                    logits=logits, batch_inputs=X, batch_targets=y
+                )
+            else:
+                X, y = MaskLearner.apply_mask_as_mixer(
+                    logits=logits,
+                    batch_inputs=X,
+                    batch_targets=y,
+                    dataset=loader.dataset,
+                )
 
             # calculate depth
             prediction = model(X)
@@ -203,7 +213,7 @@ def train_with_lmr(
             mse_loss = F.mse_loss(prediction, y)
             l1_loss = F.smooth_l1_loss(prediction, y)
 
-            composite_loss = (1.0 * err) + (1.1 * lmr_mask_loss)  # combine losses
+            composite_loss = (2.0 * err) + (0.5 * lmr_mask_loss)  # combine losses
 
             # Record losses
             errs.append(err)
@@ -360,7 +370,7 @@ def train_with_cutmix(
                     prediction[0, ...],
                     e,
                     "cutmix" + timestamp,
-                )
+                )  # plots only a single image
             except:
                 print("Failed while writing figure... continuing")
 
@@ -412,12 +422,11 @@ def init_model():
         .float()
         .to("mps")
     )
-
+    print("Initializing ...")
     # keep everything but initialize the final head model
     for name, param in model.named_parameters():
         if "output_conv" in name or "head" in name:
             if "weight" in name:
-                print(f"Initializing {name} to kaiming normal")
                 _ = nn.init.kaiming_normal_(param)
 
     return model
