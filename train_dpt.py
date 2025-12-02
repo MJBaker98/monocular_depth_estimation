@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.externals.array_api_compat.numpy import zeros
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
@@ -80,7 +81,7 @@ def train_simple(
             mse_loss = F.mse_loss(prediction, y)
             l1_loss = F.smooth_l1_loss(prediction, y)
 
-            composite_loss = (2 * err) + (0.5 * mse_loss) + (0.1 * l1_loss)
+            composite_loss = err  # + (0.5 * mse_loss) + (0.1 * l1_loss)
 
             # Record losses
             errs.append(err)
@@ -94,7 +95,7 @@ def train_simple(
             optim.zero_grad()
             composite_loss.backward()  # back-prop losses
             optim.step()
-            scheduler.step()
+            # scheduler.step()
 
             # debugging
             grads = []
@@ -126,18 +127,13 @@ def train_simple(
                 )
             try:
                 plot_test_frames(
-                    model,
-                    dataset=loader.dataset,
-                    indices=[1, 3, 5],
-                    epoch=e,
-                    model_name="simple" + timestamp,
-                    save_fig=True,
+                    model, loader.dataset, [0], e, model_name="simple" + timestamp
                 )
                 plot_while_training(
                     X[0, ...], y[0, ...], prediction[0, ...], e, "simple" + timestamp
                 )
-            except:
-                print("Failed while writing figure... continuing")
+            except Exception as e:
+                print(f"Failed while writing figure with error {e} ... continuing")
 
         if e % save_every == 0:
             print(f"Saving checkpoint at epoch {e}:")
@@ -155,6 +151,7 @@ def train_with_lmr(
     epochs: int = 50,
     save_every: int = 10,
     visualize_mask: bool = False,
+    lmr_probability: float = 0.1,
 ) -> str:
     """
     Train depth head on NYU dataset with lmr regularizer
@@ -184,26 +181,42 @@ def train_with_lmr(
 
             X = X.permute(0, 3, 1, 2)
 
-            # pass input through LMR model
-            logits = mask_learning_model(X)
+            using_lmr = False
+            if random.random() <= lmr_probability:
+                # pass input through LMR model
+                using_lmr = True
+                logits = mask_learning_model(X)
 
-            # apply the mask to the image
-            # X, y = LMR_model.apply_mask_as_cutout(
-            #     mask=logits, batch_inputs=X, batch_targets=y
-            # )
+                # apply the mask to the image
+                cutout = False
+                if cutout:
+                    X, y = MaskLearner.apply_mask_as_cutout(
+                        logits=logits, batch_inputs=X, batch_targets=y
+                    )
+                else:
+                    X, y = MaskLearner.apply_mask_as_mixer(
+                        logits=logits,
+                        batch_inputs=X,
+                        batch_targets=y,
+                        dataset=loader.dataset,
+                    )
 
             # calculate depth
             prediction = model(X)
 
             # calculate losses
             err = loss(prediction, y, mask)
-            lmr_mask_loss, depth_difference_mask = lmr_loss(
-                net_mask=logits, depth_hat=prediction.detach(), depth=y, k=10000
-            )
+
+            if using_lmr:
+                lmr_mask_loss, depth_difference_mask = lmr_loss(
+                    net_mask=logits, depth_hat=prediction.detach(), depth=y, k=10000
+                )
+            else:
+                lmr_mask_loss = torch.tensor(0.0).to("mps")
             mse_loss = F.mse_loss(prediction, y)
             l1_loss = F.smooth_l1_loss(prediction, y)
 
-            composite_loss = (1.0 * err) + (1.1 * lmr_mask_loss)  # combine losses
+            composite_loss = (2.0 * err) + (0.5 * lmr_mask_loss)  # combine losses
 
             # Record losses
             errs.append(err)
@@ -230,6 +243,17 @@ def train_with_lmr(
             i += 1
 
         with torch.no_grad():
+            data = random.choice(loader.dataset)
+            X = torch.tensor(data["image"]).float().to("mps").unsqueeze(0)
+            y = torch.tensor(data["depth"]).float().to("mps").unsqueeze(0)
+            X = X.permute(0, 3, 1, 2)
+            prediction = model(X)
+            logits = mask_learning_model(X)
+
+            lmr_mask_loss, depth_difference_mask = lmr_loss(
+                net_mask=logits, depth_hat=prediction.detach(), depth=y, k=10000
+            )
+
             output_path = Path(log_path)
             output_path.mkdir(parents=True, exist_ok=True)
             with open(logfile_name, "a") as logfile:
@@ -237,15 +261,18 @@ def train_with_lmr(
                     f"epoch: {e} | train_loss: {sum(errs) / len(errs):.2f} | mse_loss: {sum(mse_losses) / len(mse_losses):.2f} | l1_loss: {sum(l1_losses) / len(l1_losses):.2f} | LMR Loss: {sum(lmr_mask_losses) / len(lmr_mask_losses):.2f} | composite loss: {sum(composite_losses) / len(composite_losses):.2f}\n"
                 )
             try:
-                plot_while_training(X[0, ...], y[0, ...], prediction[0, ...], e, "LMR")
-                # plot_test_frames(
-                #     model, loader.dataset, [1, 3, 5], e, model_name="LMR_" + timestamp
-                # )
+                plot_while_training(
+                    X[0, ...], y[0, ...], prediction[0, ...], e, "LMR" + timestamp
+                )
+                plot_test_frames(
+                    model, loader.dataset, [0], e, model_name="LMR" + timestamp
+                )
                 if visualize_mask:
                     plot_lmr_mask(
                         image=X,
                         net_logits=logits,
                         depth_based_mask=depth_difference_mask,
+                        model_name="LMR" + timestamp,
                         epoch=e,
                     )
             except Exception as e:
@@ -319,7 +346,7 @@ def train_with_cutmix(
                 l1_loss = F.smooth_l1_loss(prediction, targets)
 
             # composite_loss = (0.1 * err) + (0.5 * mse_loss) + (0.1 * l1_loss)
-            composite_loss = err  # only use the shift and scale invariant loss
+            composite_loss = 2 * err  # only use the shift and scale invariant loss
 
             # Record losses
             errs.append(err)
@@ -331,7 +358,7 @@ def train_with_cutmix(
             optim.zero_grad()
             composite_loss.backward()  # back-prop losses
             optim.step()
-            scheduler.step()
+            # scheduler.step()
 
             if i % 1 == 0:
                 with torch.no_grad():
@@ -351,15 +378,15 @@ def train_with_cutmix(
                     f"epoch: {e} | train_loss: {sum(errs) / len(errs):.2f} | mse_loss: {sum(mse_losses) / len(mse_losses):.2f} | l1_loss: {sum(l1_losses) / len(l1_losses):.2f} | composite loss: {sum(composite_losses) / len(composite_losses):.2f}\n"
                 )
             try:
-                plot_test_frames(
-                    model, loader.dataset, [1, 3, 5], e, "cutmix" + timestamp, True
-                )
                 plot_while_training(
                     images[0, ...],
                     targets[0, ...],
                     prediction[0, ...],
                     e,
                     "cutmix" + timestamp,
+                )  # plots only a single image
+                plot_test_frames(
+                    model, loader.dataset, [0], e, model_name="cutmix" + timestamp
                 )
             except:
                 print("Failed while writing figure... continuing")
@@ -412,12 +439,11 @@ def init_model():
         .float()
         .to("mps")
     )
-
+    print("Initializing ...")
     # keep everything but initialize the final head model
     for name, param in model.named_parameters():
         if "output_conv" in name or "head" in name:
             if "weight" in name:
-                print(f"Initializing {name} to kaiming normal")
                 _ = nn.init.kaiming_normal_(param)
 
     return model

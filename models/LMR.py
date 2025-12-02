@@ -3,9 +3,13 @@ Implementation of the LMR regularizer with the goal of learning a single image m
 Uses a similar process as the method outlined in the file LNR.py, but instead focuss on only a single image
 """
 
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.linalg import inv_ex
+from torch.utils.data import Dataset
 
 
 class Conv_Block(nn.Module):
@@ -117,11 +121,40 @@ class MaskLearner(nn.Module):
         return final_mask.long()
 
     @staticmethod
-    def apply_mask_as_mixer() -> None:
+    def apply_mask_as_mixer(
+        logits: torch.Tensor,
+        batch_inputs: torch.Tensor,
+        batch_targets: torch.Tensor,
+        dataset: Dataset,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         given a mask and an input batch of images apply the mask to fill in data from other images
         """
-        pass
+        # select a random image in the dataset
+        swap = random.choice(dataset)
+        swap_image = torch.Tensor(swap["image"]).float().to("mps")
+        swap_target = torch.Tensor(swap["depth"]).float().to("mps")
+        swap_image = swap_image.permute(2, 0, 1).unsqueeze(
+            0
+        )  # put channel in first place
+
+        # get mask from the unet logits
+        mask = MaskLearner.get_mask_from_logits(logits)
+
+        # select pixels from the mask from a different imagea
+        inv_mask = torch.logical_not(
+            mask.bool()
+        )  # mask has 1 for kept and 0 for masked, we want the opposite to index
+
+        # generate input image by combining
+        # permute for broadcasting to work
+        new_imgs = (
+            batch_inputs.permute(1, 0, 2, 3) * inv_mask.float()
+            + swap_image.permute(1, 0, 2, 3) * mask
+        )
+        new_targets = batch_targets * inv_mask.float() + swap_target * mask
+
+        return new_imgs.permute(1, 0, 2, 3), new_targets
 
     @staticmethod
     def apply_mask_as_cutout(
@@ -145,6 +178,6 @@ class MaskLearner(nn.Module):
         reshaped_batch = (
             reshaped_batch * mask
         )  # multiply instead of indexing to keep gradient flow
-        batch_targets = batch_targets * 0.0
+        batch_targets = batch_targets * mask
 
         return batch_inputs.permute(0, 1, 2, 3), batch_targets
