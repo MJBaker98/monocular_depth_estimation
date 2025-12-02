@@ -49,20 +49,20 @@ def main(testing: bool = False):
 
     ########################
     # Model agnostic hyperparameters
-    epochs = 1
+    epochs = 30
 
     ########################
     # Simple model
     if do_simple:
         simple_model = init_model()
 
-        optim = Adam(simple_model.parameters(), lr=1e-5)
+        optim = Adam(simple_model.parameters(), lr=1e-4)
         scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
 
         # standard training - no regularization at all
         simple_log = train_simple(
             model=simple_model,
-            loader=nyu_single_image_dataloader,
+            loader=nyu_train_dataloader,
             optim=optim,
             epochs=epochs,
             scheduler=scheduler,
@@ -80,7 +80,7 @@ def main(testing: bool = False):
     if do_cutmix:
         cutmix_model = init_model()
 
-        optim = Adam(cutmix_model.parameters(), lr=1e-5)
+        optim = Adam(cutmix_model.parameters(), lr=1e-4)
         scheduler = CosineAnnealingLR(optim, eta_min=1e-7, T_max=epochs)
 
         # standard training - no regularization at all
@@ -122,16 +122,16 @@ def main(testing: bool = False):
             scheduler=None,
             save_every=10,
             visualize_mask=True,
+            lmr_probability=0.1,
         )
-        if not testing:
-            lmr_res = eval(lmr_model, nyu_test_dataloader)
-            with open(lmr_log, "a") as file:
-                file.write(f"Eval avg_mse: {lmr_res['mse_avg']}")
-            timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
-            lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
-            torch.save(lmr_model.state_dict(), lmr_path)
+        lmr_res = eval(lmr_model, nyu_test_dataloader)
+        with open(lmr_log, "a") as file:
+            file.write(f"Eval avg_mse: {lmr_res['mse_avg']}")
+        timestr = datetime.now().strftime("%a_%d_%b_%Y_%I_%M%p")
+        lmr_path = "output/checkpoint/lmr_model" + timestr + ".pth"
+        torch.save(lmr_model.state_dict(), lmr_path)
 
 
 if __name__ == "__main__":
-    # train each model for 20 epochs
-    main(testing=False)
+    # train each model for 30 epochs
+    main()

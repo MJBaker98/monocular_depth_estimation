@@ -67,34 +67,35 @@ def plot_test_frames(
     indices: List[int],
     epoch: int,
     model_name: str,
-    save_fig: bool = False,
 ) -> None:
     """Generate a plot of depth images at specific indices"""
     for i in indices:
         datapoint = dataset[i]
         X = datapoint["image"]
         y = datapoint["depth"]
-        mask = datapoint["mask"]
+        truth_dmax = y.max()
+        truth_dmin = y.min()
 
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 8))
         ax1.imshow(X)
         ax1.set_title("Image")
-        ax2.imshow(y)
+        ax2.imshow(y, vmin=truth_dmin, vmax=truth_dmax)
         ax2.set_title("Truth depth")
 
         X = torch.Tensor(X).to("mps").unsqueeze(0).permute(0, 3, 1, 2)
         with torch.no_grad():
             prediction = model(X).permute(1, 2, 0).cpu().numpy()
-        ax3.imshow(prediction, cmap="viridis")
+        ax3.imshow(prediction, cmap="viridis", vmin=truth_dmin, vmax=truth_dmax)
         ax3.set_title("Predicted depth")
 
-        output_path = Path("output/figs")
+        out_path = Path(f"output/figs/{model_name}")
+        out_path.mkdir(parents=True, exist_ok=True)
+        out_path = out_path / f"depth_test_image_index_{i}_epoch_{epoch}.png"
+        plt.savefig(out_path)
 
-        if save_fig:
-            out_str = f"depth_{model_name}_index_{i}_epoch_{epoch}.png"
-            plt.savefig(out_str)
-        else:
-            plt.show()
+        # clean up figures
+        plt.close()
+        del fig
 
 
 def plot_while_training(
@@ -151,6 +152,7 @@ def plot_lmr_mask(
     image: torch.Tensor,
     net_logits: torch.Tensor,
     depth_based_mask: torch.Tensor,
+    model_name: str,
     epoch: int,
 ):
     """
@@ -173,7 +175,7 @@ def plot_lmr_mask(
     ax2.imshow(depth_mask_to_show.cpu(), cmap="binary")
     ax2.set_title("Accuracy-driven Mask")
 
-    out_path = Path("output/figs/LMR/lmr_mask")
+    out_path = Path(f"output/figs/{model_name}/lmr_mask")
     out_path.mkdir(parents=True, exist_ok=True)
     out_path = out_path / f"lmr_mask_comparison_epoch_{epoch}.png"
     plt.savefig(out_path)
